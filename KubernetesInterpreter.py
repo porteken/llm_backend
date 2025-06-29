@@ -98,7 +98,10 @@ class KubernetesCodeExecutor:
         self.core_api.create_namespaced_config_map(namespace=self.namespace, body=configmap)
 
     def _create_and_run_job(self, job_name: str, configmap_name: str,libraries_used:List[str]):
-        libraries_to_install="" if len(libraries_used)>0 else f"pip3 install {''.join(libraries_used)} && "
+        if len(libraries_used)>0:
+            args=["pip3","install",''.join(libraries_used),"&&","python3", "-u", f"{CONTAINER_MOUNT_PATH}/{CONFIG_MAP_DATA_KEY}"]
+        else:
+            args=["python3", "-u", f"{CONTAINER_MOUNT_PATH}/{CONFIG_MAP_DATA_KEY}"]
         """Creates a V1Job object and submits it to the cluster."""
         volume_mount = client.V1VolumeMount(
             name=VOLUME_NAME,
@@ -114,7 +117,7 @@ class KubernetesCodeExecutor:
             name=job_name,
             image=self.image,
             command=["/bin/bash","-c"],
-            args=[libraries_to_install,"python3", "-u", f"{CONTAINER_MOUNT_PATH}/{CONFIG_MAP_DATA_KEY}"],
+            args=args,
             security_context=security_context,
             volume_mounts=[volume_mount]
         )
