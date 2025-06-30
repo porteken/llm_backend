@@ -27,7 +27,12 @@ class KubernetesCodeExecutor:
     and guaranteed resource cleanup.
     """
 
-    def __init__(self, namespace: str = "default", image: str = "python:3.11-slim", timeout_seconds: int = 300):
+    def __init__(
+        self,
+        namespace: str = "default",
+        image: str = "python_test",
+        timeout_seconds: int = 300,
+    ):
         """
         Initializes the KubernetesCodeExecutor.
 
@@ -40,7 +45,9 @@ class KubernetesCodeExecutor:
             # Load config from default location (~/.kube/config) or in-cluster config
             config.load_kube_config()
         except config.ConfigException:
-            print("Could not load kube config. Are you running in a cluster or have a valid config file?")
+            print(
+                "Could not load kube config. Are you running in a cluster or have a valid config file?"
+            )
             # For in-cluster, use: config.load_incluster_config()
             raise
 
@@ -50,7 +57,7 @@ class KubernetesCodeExecutor:
         self.image = image
         self.timeout_seconds = timeout_seconds
 
-    def run(self, code_to_run: str, libraries_used,prefix: str = 'code-runner') -> str:
+    def run(self, code_to_run: str, libraries_used, prefix: str = "code-runner") -> str:
         """
         Creates, runs, and cleans up a Kubernetes Job for the given code.
 
@@ -62,7 +69,7 @@ class KubernetesCodeExecutor:
 
         Returns:
             str: The logs (stdout/stderr) from the completed Job.
-            
+
         Raises:
             ApiException: If a Kubernetes API call fails.
             TimeoutError: If the job does not complete within the specified timeout.
@@ -76,7 +83,7 @@ class KubernetesCodeExecutor:
             self._create_configmap(configmap_name, code_to_run)
 
             # 2. Create and run the Job
-            self._create_and_run_job(job_name, configmap_name,libraries_used)
+            self._create_and_run_job(job_name, configmap_name, libraries_used)
 
             # 3. Wait for the job to complete and get results
             return self._wait_for_job_completion(job_name)
@@ -88,20 +95,27 @@ class KubernetesCodeExecutor:
         finally:
             # 4. ALWAYS clean up resources to prevent leaks
             self._cleanup_resources(job_name, configmap_name)
-    
+
     def _create_configmap(self, name: str, code: str):
         """Creates a V1ConfigMap object and deploys it."""
         configmap = client.V1ConfigMap(
-            metadata=client.V1ObjectMeta(name=name),
-            data={CONFIG_MAP_DATA_KEY: code}
+            metadata=client.V1ObjectMeta(name=name), data={CONFIG_MAP_DATA_KEY: code}
         )
-        self.core_api.create_namespaced_config_map(namespace=self.namespace, body=configmap)
+        self.core_api.create_namespaced_config_map(
+            namespace=self.namespace, body=configmap
+        )
 
-    def _create_and_run_job(self, job_name: str, configmap_name: str,libraries_used:List[str]):
-        if len(libraries_used)>0:
-            args=["pip3","install",''.join(libraries_used),"&&","python3", "-u", f"{CONTAINER_MOUNT_PATH}/{CONFIG_MAP_DATA_KEY}"]
+    def _create_and_run_job(
+        self, job_name: str, configmap_name: str, libraries_used: List[str]
+    ):
+        if len(libraries_used) > 0:
+            args = [
+                f"pip3 install --no-cache-dir --user {' '.join(libraries_used)} && python3",
+                "-u",
+                f"{CONTAINER_MOUNT_PATH}/{CONFIG_MAP_DATA_KEY}",
+            ]
         else:
-            args=["python3", "-u", f"{CONTAINER_MOUNT_PATH}/{CONFIG_MAP_DATA_KEY}"]
+            args = ["python3", "-u", f"{CONTAINER_MOUNT_PATH}/{CONFIG_MAP_DATA_KEY}"]
         """Creates a V1Job object and submits it to the cluster."""
         volume_mount = client.V1VolumeMount(
             name=VOLUME_NAME,
@@ -109,37 +123,37 @@ class KubernetesCodeExecutor:
         )
         volume = client.V1Volume(
             name=VOLUME_NAME,
-            config_map=client.V1ConfigMapVolumeSource(name=configmap_name)
+            config_map=client.V1ConfigMapVolumeSource(name=configmap_name),
         )
-        security_context=client.V1SecurityContext(run_as_user=1001,run_as_non_root=True)
+        security_context = client.V1SecurityContext(
+            run_as_user=1001, run_as_non_root=True
+        )
 
         container = client.V1Container(
             name=job_name,
             image=self.image,
-            command=["/bin/bash","-c"],
+            image_pull_policy="Never",
+            command=["/bin/bash", "-c"],
             args=args,
             security_context=security_context,
-            volume_mounts=[volume_mount]
+            volume_mounts=[volume_mount],
         )
         pod_spec = client.V1PodSpec(
-            restart_policy="Never", 
-            containers=[container], 
-            volumes=[volume]
+            restart_policy="Never", containers=[container], volumes=[volume]
         )
         template_spec = client.V1PodTemplateSpec(
-            metadata=client.V1ObjectMeta(labels={"app": job_name}),
-            spec=pod_spec
+            metadata=client.V1ObjectMeta(labels={"app": job_name}), spec=pod_spec
         )
         job_spec = client.V1JobSpec(
             template=template_spec,
             backoff_limit=2,  # Fail faster
-            ttl_seconds_after_finished=60 # Auto-cleanup by Kubernetes if our script fails
+            ttl_seconds_after_finished=60,  # Auto-cleanup by Kubernetes if our script fails
         )
         job_body = client.V1Job(
             api_version="batch/v1",
             kind="Job",
             metadata=client.V1ObjectMeta(name=job_name),
-            spec=job_spec
+            spec=job_spec,
         )
 
         self.batch_api.create_namespaced_job(body=job_body, namespace=self.namespace)
@@ -149,7 +163,9 @@ class KubernetesCodeExecutor:
         start_time = time()
         while time() - start_time < self.timeout_seconds:
             try:
-                status = self.batch_api.read_namespaced_job_status(job_name, self.namespace)
+                status = self.batch_api.read_namespaced_job_status(
+                    job_name, self.namespace
+                )
                 if status.status.succeeded:
                     return self._get_pod_logs(job_name)
                 if status.status.failed:
@@ -159,10 +175,12 @@ class KubernetesCodeExecutor:
                 if e.status == 404:
                     sleep(1)
                     continue
-                raise # Re-raise other API errors
-            sleep(2) # Poll less aggressively
+                raise  # Re-raise other API errors
+            sleep(2)  # Poll less aggressively
 
-        raise TimeoutError(f"Job '{job_name}' did not complete within {self.timeout_seconds} seconds.")
+        raise TimeoutError(
+            f"Job '{job_name}' did not complete within {self.timeout_seconds} seconds."
+        )
 
     def _get_pod_logs(self, job_name: str) -> str:
         """Retrieves logs from the pod created by a job."""
@@ -172,38 +190,37 @@ class KubernetesCodeExecutor:
             )
             if not pod_list.items:
                 return "Could not find pod for the job. It might have been deleted or failed to start."
-            
+
             pod_name = pod_list.items[0].metadata.name
-            return self.core_api.read_namespaced_pod_log(pod_name, self.namespace).strip()
+            return self.core_api.read_namespaced_pod_log(
+                pod_name, self.namespace
+            ).strip()
         except ApiException as e:
             return f"Could not retrieve logs. Kubernetes API Error: {e.reason}"
 
     def _cleanup_resources(self, job_name: str, configmap_name: str):
         """Deletes the job and configmap, ignoring 'Not Found' errors."""
-        delete_options = client.V1DeleteOptions(propagation_policy='Foreground')
-        
+        delete_options = client.V1DeleteOptions(propagation_policy="Foreground")
+
         # Delete Job
         try:
             self.batch_api.delete_namespaced_job(
-                name=job_name,
-                namespace=self.namespace,
-                body=delete_options
+                name=job_name, namespace=self.namespace, body=delete_options
             )
         except ApiException as e:
-            if e.status != 404: # Ignore if not found
+            if e.status != 404:  # Ignore if not found
                 print(f"Error deleting job '{job_name}': {e.reason}")
 
         # Delete ConfigMap
         try:
             self.core_api.delete_namespaced_config_map(
-                name=configmap_name,
-                namespace=self.namespace
+                name=configmap_name, namespace=self.namespace
             )
         except ApiException as e:
-            if e.status != 404: # Ignore if not found
+            if e.status != 404:  # Ignore if not found
                 print(f"Error deleting configmap '{configmap_name}': {e.reason}")
-    
-    def cleanup_all_by_prefix(self, prefix: str = 'code-runner'):
+
+    def cleanup_all_by_prefix(self, prefix: str = "code-runner"):
         """
         Deletes all Jobs and ConfigMaps in the namespace with a specific prefix.
         This is a utility function for manual cleanup and should be used with caution.
@@ -213,47 +230,60 @@ class KubernetesCodeExecutor:
         jobs = self.batch_api.list_namespaced_job(namespace=self.namespace)
         for job in jobs.items:
             if job.metadata.name.startswith(prefix):
-                self._cleanup_resources(job.metadata.name, "dummy-cm") # Only need job name here
+                self._cleanup_resources(
+                    job.metadata.name, "dummy-cm"
+                )  # Only need job name here
 
         # Cleanup ConfigMaps
         configmaps = self.core_api.list_namespaced_config_map(namespace=self.namespace)
         for cm in configmaps.items:
             if cm.metadata.name.startswith(prefix):
                 try:
-                    self.core_api.delete_namespaced_config_map(name=cm.metadata.name, namespace=self.namespace)
+                    self.core_api.delete_namespaced_config_map(
+                        name=cm.metadata.name, namespace=self.namespace
+                    )
                     print(f"ConfigMap '{cm.metadata.name}' deleted.")
                 except ApiException as e:
-                     if e.status != 404:
-                         print(f"Error deleting configmap '{cm.metadata.name}': {e.reason}")
+                    if e.status != 404:
+                        print(
+                            f"Error deleting configmap '{cm.metadata.name}': {e.reason}"
+                        )
+
 
 # --- CrewAI Tool Definition ---
 
+
 class KubernetesExecutionToolSchema(BaseModel):
     """Input schema for the KubernetesExecutionTool."""
-    code: str = Field(..., description="Python3 code used to be interpreted in the Docker container. ALWAYS PRINT the final result and the output of the code")
+
+    code: str = Field(
+        ...,
+        description="Python3 code used to be interpreted in the Docker container. ALWAYS PRINT the final result and the output of the code",
+    )
     libraries_used: List[str] = Field(
         ...,
         description="List of libraries used in the code with proper installing names separated by commas. Example: numpy,pandas,beautifulsoup4",
     )
 
+
 class KubernetesExecutionTool(BaseTool):
     name: str = "Kubernetes Python Code Executor"
-    description: str = "Executes Python code in a secure, sandboxed Kubernetes environment. Use this for running code, testing scripts, or any execution that requires isolation. It captures and returns all output (stdout/stderr) from the script."
+    description: str = (
+        "Executes Python code in a secure, sandboxed Kubernetes environment. Use this for running code, testing scripts, or any execution that requires isolation. It captures and returns all output (stdout/stderr) from the script."
+    )
     args_schema: Type[BaseModel] = KubernetesExecutionToolSchema
 
-    def _run(self, code: str,libraries_used:List) -> str:
+    def _run(self, code: str, libraries_used: List) -> str:
         """
         The tool's execution logic.
-        
+
         It instantiates the executor and runs the provided code.
         """
         # You can make the executor configurable here if needed
         # e.g., executor = KubernetesCodeExecutor(image="my-custom-image-with-libs:latest")
         executor = KubernetesCodeExecutor()
         try:
-            results = executor.run(code,libraries_used)
+            results = executor.run(code, libraries_used)
             return results
         except Exception as e:
             return f"An unexpected error occurred: {e}"
-
-    
