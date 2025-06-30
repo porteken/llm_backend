@@ -284,6 +284,6 @@ class KubernetesExecutionTool(BaseTool):
         executor = KubernetesCodeExecutor()
         try:
             results = executor.run(code, libraries_used)
-            return results
+            return {"answer":results,"code":code}
         except Exception as e:
             return f"An unexpected error occurred: {e}"
