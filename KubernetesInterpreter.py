@@ -15,32 +15,12 @@ VOLUME_NAME = "code-volume"
 
 
 class KubernetesCodeExecutor:
-    """
-    Executes Python code in a Kubernetes Job.
-
-    This class handles the lifecycle of running a piece of Python code within a
-    dedicated Kubernetes Job. It creates a ConfigMap to store the code, a Job
-    to run it, waits for completion, retrieves the logs, and cleans up all
-    resources.
-
-    It is designed to be safe and robust, with timeouts, proper error handling,
-    and guaranteed resource cleanup.
-    """
-
     def __init__(
         self,
         namespace: str = "default",
         image: str = "python_test",
         timeout_seconds: int = 300,
     ):
-        """
-        Initializes the KubernetesCodeExecutor.
-
-        Args:
-            namespace (str): The Kubernetes namespace to operate in.
-            image (str): The container image to use for the Job. Must have python3 available.
-            timeout_seconds (int): Maximum time to wait for the Job to complete.
-        """
         try:
             # Load config from default location (~/.kube/config) or in-cluster config
             config.load_kube_config()
@@ -58,22 +38,6 @@ class KubernetesCodeExecutor:
         self.timeout_seconds = timeout_seconds
 
     def run(self, code_to_run: str, libraries_used, prefix: str = "code-runner") -> str:
-        """
-        Creates, runs, and cleans up a Kubernetes Job for the given code.
-
-        This is the main entrypoint method.
-
-        Args:
-            code_to_run (str): The Python code to execute.
-            prefix (str): A prefix for the Kubernetes resource names.
-
-        Returns:
-            str: The logs (stdout/stderr) from the completed Job.
-
-        Raises:
-            ApiException: If a Kubernetes API call fails.
-            TimeoutError: If the job does not complete within the specified timeout.
-        """
         job_id = str(uuid.uuid4())[:8]
         job_name = f"{prefix}-job-{job_id}"
         configmap_name = f"{prefix}-configmap-{job_id}"
@@ -97,7 +61,6 @@ class KubernetesCodeExecutor:
             self._cleanup_resources(job_name, configmap_name)
 
     def _create_configmap(self, name: str, code: str):
-        """Creates a V1ConfigMap object and deploys it."""
         configmap = client.V1ConfigMap(
             metadata=client.V1ObjectMeta(name=name), data={CONFIG_MAP_DATA_KEY: code}
         )
@@ -116,7 +79,6 @@ class KubernetesCodeExecutor:
             ]
         else:
             args = ["python3", "-u", f"{CONTAINER_MOUNT_PATH}/{CONFIG_MAP_DATA_KEY}"]
-        """Creates a V1Job object and submits it to the cluster."""
         volume_mount = client.V1VolumeMount(
             name=VOLUME_NAME,
             mount_path=CONTAINER_MOUNT_PATH,
@@ -159,7 +121,6 @@ class KubernetesCodeExecutor:
         self.batch_api.create_namespaced_job(body=job_body, namespace=self.namespace)
 
     def _wait_for_job_completion(self, job_name: str) -> str:
-        """Waits for a job to complete and returns its logs."""
         start_time = time()
         while time() - start_time < self.timeout_seconds:
             try:
@@ -183,7 +144,6 @@ class KubernetesCodeExecutor:
         )
 
     def _get_pod_logs(self, job_name: str) -> str:
-        """Retrieves logs from the pod created by a job."""
         try:
             pod_list = self.core_api.list_namespaced_pod(
                 self.namespace, label_selector=f"job-name={job_name}"
@@ -199,7 +159,6 @@ class KubernetesCodeExecutor:
             return f"Could not retrieve logs. Kubernetes API Error: {e.reason}"
 
     def _cleanup_resources(self, job_name: str, configmap_name: str):
-        """Deletes the job and configmap, ignoring 'Not Found' errors."""
         delete_options = client.V1DeleteOptions(propagation_policy="Foreground")
 
         # Delete Job
@@ -221,10 +180,6 @@ class KubernetesCodeExecutor:
                 print(f"Error deleting configmap '{configmap_name}': {e.reason}")
 
     def cleanup_all_by_prefix(self, prefix: str = "code-runner"):
-        """
-        Deletes all Jobs and ConfigMaps in the namespace with a specific prefix.
-        This is a utility function for manual cleanup and should be used with caution.
-        """
         print(f"Starting cleanup of all resources with prefix '{prefix}'...")
         # Cleanup Jobs
         jobs = self.batch_api.list_namespaced_job(namespace=self.namespace)
@@ -254,8 +209,6 @@ class KubernetesCodeExecutor:
 
 
 class KubernetesExecutionToolSchema(BaseModel):
-    """Input schema for the KubernetesExecutionTool."""
-
     code: str = Field(
         ...,
         description="Python3 code used to be interpreted in the Docker container. ALWAYS PRINT the final result and the output of the code",
@@ -274,11 +227,6 @@ class KubernetesExecutionTool(BaseTool):
     args_schema: Type[BaseModel] = KubernetesExecutionToolSchema
 
     def _run(self, code: str, libraries_used: List) -> str:
-        """
-        The tool's execution logic.
-
-        It instantiates the executor and runs the provided code.
-        """
         # You can make the executor configurable here if needed
         # e.g., executor = KubernetesCodeExecutor(image="my-custom-image-with-libs:latest")
         executor = KubernetesCodeExecutor()

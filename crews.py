@@ -27,7 +27,6 @@ python_agent = Agent(
 
 
 class PythonSchema(BaseModel):
-    """Input schema for the KubernetesExecutionTool."""
 
     code: str = Field(..., description="Python3 code used to generate final answer.")
     answer: str = Field(..., description="answer from executed python code")

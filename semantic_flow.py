@@ -13,19 +13,12 @@ class SemanticState(BaseModel):
 
 
 class SemanticRoutingFlow(Flow[SemanticState]):
-    """
-    A CrewAI Flow that uses a semantic router to conditionally
-    route a query to either a coding crew or a general knowledge crew.
-    """
-
     @start()
     def start_flow(self) -> Dict[str, Any]:
         return {"prompt": self.state.prompt}
 
     @router(start_flow)
     def classify_query(self):
-        """Classifies the query using semantic-router and updates the state."""
-        print("--- [Classification Step] ---")
 
         coding_route = Route(
             name="coding",
